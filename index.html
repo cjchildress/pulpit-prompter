@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Pulpit Prompter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&display=swap">
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js" defer></script>
+<style>
+/* Layout: one centered reading column scrolled so the spoken line sits on a fixed focus line at 42% height; toolbar floats on top and hides while preaching. */
+:root {
+  --bg: #f4f5f7; --fg: #1b1f2a; --muted: #5d6475; --read: #9aa0ad;
+  --accent: #9a6512; --on-accent: #ffffff; --now: rgba(196, 138, 36, .17);
+  --hover: rgba(27, 31, 42, .06); --panel: #ffffff; --btn: #ffffff; --line: #d6d9e0;
+  --scripture: #284a86; --scripture-line: #9fb3d6; --scrim: rgba(20, 24, 32, .45);
+  --serif: "Literata", Georgia, "Times New Roman", serif;
+  --ui: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --size: 38px; --focus: 42%;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg: #10131a; --fg: #ece8dd; --muted: #8c93a3; --read: #4a5162;
+  --accent: #e2ad4f; --on-accent: #1a1406; --now: rgba(226, 173, 79, .15);
+  --hover: rgba(236, 232, 221, .07); --panel: #181c25; --btn: #212633; --line: #2c3242;
+  --scripture: #a8c0ea; --scripture-line: #4a5f86; --scrim: rgba(0, 0, 0, .6);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font-family: var(--ui); overflow: hidden; -webkit-text-size-adjust: 100%; }
+
+#scroller {
+  position: fixed; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+  padding-left: max(30px, env(safe-area-inset-left, 0px)); padding-right: max(20px, env(safe-area-inset-right, 0px));
+}
+#script {
+  max-width: 30em; margin: 0 auto; font-family: var(--serif); font-size: var(--size); line-height: 1.5;
+  padding-block: 42vh 60vh; display: flex; flex-direction: column; gap: .7em;
+}
+#script p, #script h1, #script h2 { margin: 0; }
+.b-h1 { font-family: var(--ui); font-size: .64em; font-weight: 700; line-height: 1.25; text-wrap: balance; }
+.b-h {
+  font-family: var(--ui); font-size: .4em; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--accent); border-top: 1px solid var(--line); padding-top: 1.1em; margin-top: .8em !important;
+}
+.b-h1 + .b-h { border-top: 0; padding-top: 0; margin-top: 0 !important; color: var(--muted); letter-spacing: .06em; }
+.b-q { color: var(--scripture); padding-left: .7em; border-left: .12em solid var(--scripture-line); }
+.b-i { font-style: italic; }
+.w { cursor: pointer; border-radius: .12em; transition: color .35s ease, background-color .35s ease; -webkit-tap-highlight-color: transparent; }
+.w.read { color: var(--read); }
+.w.now { color: var(--fg); background: var(--now); }
+.b-q .w.now { color: var(--scripture); }
+.w.cur { box-shadow: inset 0 -.07em 0 var(--accent); }
+@media (hover: hover) { .w:hover { background: var(--hover); } }
+
+#focus {
+  position: fixed; left: max(8px, env(safe-area-inset-left, 0px)); top: var(--focus); width: 0; height: 0;
+  border-top: 9px solid transparent; border-bottom: 9px solid transparent; border-left: 12px solid var(--accent);
+  transform: translateY(-50%); opacity: .9; pointer-events: none; z-index: 3;
+}
+
+#bar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: calc(8px + env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-right, 0px)) 8px max(12px, env(safe-area-inset-left, 0px));
+  background: var(--panel); border-bottom: 1px solid var(--line); transition: opacity .4s ease, transform .4s ease;
+}
+#bar.away { opacity: 0; transform: translateY(-100%); pointer-events: none; }
+button {
+  font: inherit; font-size: 15px; min-height: 40px; padding: 0 14px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--btn); color: var(--fg); cursor: pointer; white-space: nowrap;
+}
+button:focus-visible, textarea:focus-visible, .drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .5; cursor: default; }
+.title { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 1 140px; }
+.stat { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mic { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+.mic .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.mic.on { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.mic.on .dot { background: var(--on-accent); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .2; } }
+.group { display: inline-flex; gap: 4px; }
+
+#progress { position: fixed; left: 0; bottom: 0; height: 3px; width: 0; background: var(--accent); z-index: 4; transition: width .4s ease; }
+#heard {
+  position: fixed; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  max-width: min(calc(100vw - 210px), 640px); font-size: 14px; color: var(--muted); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 8px; padding: 6px 10px; z-index: 4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#heard b { color: var(--fg); font-weight: 700; }
+#timer {
+  position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  z-index: 4; display: flex; align-items: baseline; gap: 6px; padding: 6px 12px; border-radius: 10px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+  font-family: var(--ui); font-variant-numeric: tabular-nums; pointer-events: none;
+}
+#timer strong { font-size: 26px; font-weight: 700; color: var(--fg); }
+#timer span { font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+#timer.running strong { color: var(--accent); }
+#toast {
+  position: fixed; left: 50%; bottom: calc(30px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  width: max-content; max-width: min(92vw, 560px); background: var(--fg); color: var(--bg); padding: 10px 16px;
+  border-radius: 10px; font-size: 15px; line-height: 1.4; z-index: 20; opacity: 0; transition: opacity .3s ease; pointer-events: none;
+}
+#toast.show { opacity: 1; }
+
+.overlay { position: fixed; inset: 0; z-index: 10; background: var(--scrim); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.sheet {
+  background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 14px; width: 100%; max-width: 620px;
+  max-height: 100%; overflow: auto; padding: 24px; display: flex; flex-direction: column; gap: 14px;
+}
+.sheet h2 { margin: 0; font-family: var(--serif); font-size: 26px; font-weight: 600; }
+.drop {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center; cursor: pointer;
+  border: 2px dashed var(--line); border-radius: 10px; padding: 22px 16px; font-size: 16px;
+}
+.drop.over { border-color: var(--accent); }
+.drop span { color: var(--muted); font-size: 14px; }
+.drop input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.lbl { font-size: 14px; font-weight: 700; }
+textarea {
+  width: 100%; font: 16px/1.45 var(--serif); background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px; resize: vertical;
+}
+.row { display: flex; flex-wrap: wrap; gap: 8px; }
+.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+.hint { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+.keys { margin: 0; padding-left: 18px; color: var(--muted); font-size: 14px; line-height: 1.6; }
+
+@media (max-width: 720px) {
+  #leftStat, #heardBtn { display: none; }
+  #scroller { padding-left: max(24px, env(safe-area-inset-left, 0px)); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<main id="scroller"><article id="script" aria-live="off"></article></main>
+<div id="focus" aria-hidden="true"></div>
+
+<header id="bar">
+  <button id="loadBtn">Load sermon</button>
+  <span id="docTitle" class="title"></span>
+  <span id="clock" class="stat" title="Time preaching">0:00</span>
+  <span id="leftStat" class="stat" title="Estimated time left at your pace"></span>
+  <button id="micBtn" class="mic"><span class="dot"></span><span id="micLbl">Start listening</span></button>
+  <button id="topBtn" title="Go back to the beginning">From top</button>
+  <span class="group">
+    <button id="smaller" aria-label="Smaller text">A−</button>
+    <button id="bigger" aria-label="Larger text">A+</button>
+  </span>
+  <button id="themeBtn">Light</button>
+  <button id="heardBtn" aria-pressed="false" title="Show the words the microphone hears">Show heard</button>
+  <button id="fsBtn">Full screen</button>
+</header>
+
+<div id="heard" hidden></div>
+<div id="timer" aria-live="off"><strong id="timerVal">0:00</strong><span>preaching</span></div>
+<div id="progress"></div>
+<div id="toast" role="status"></div>
+
+<div id="loader" class="overlay" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="loadTitle">
+    <h2 id="loadTitle">Load a sermon</h2>
+    <label class="drop" id="drop" for="fileIn">
+      <input type="file" id="fileIn" accept=".docx,.txt,.md,.markdown,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+      <strong>Choose a file</strong> or drop it here
+      <span>Word (.docx), Markdown (.md) or plain text (.txt)</span>
+    </label>
+    <label for="pasteIn" class="lbl">Or paste the text</label>
+    <textarea id="pasteIn" rows="7" placeholder="Paste your sermon here"></textarea>
+    <div class="row">
+      <button id="usePaste" class="primary">Use pasted text</button>
+      <button id="closeLoad">Cancel</button>
+    </div>
+    <p class="hint">From Claude Docs, export as Word or Markdown. Section headings show as labels and are skipped while listening. Tap any word to jump there if the prompter loses its place.</p>
+    <ul class="keys">
+      <li>Space: start or stop listening</li>
+      <li>Arrow keys, Page Up/Down or a page-turner pedal: previous or next sentence</li>
+      <li>+ and −: text size</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = s => document.querySelector(s);
+  const scroller = $('#scroller'), article = $('#script'), bar = $('#bar');
+  const micBtn = $('#micBtn'), micLbl = $('#micLbl'), docTitle = $('#docTitle');
+  const clockEl = $('#clock'), leftEl = $('#leftStat'), progressEl = $('#progress');
+  const heardEl = $('#heard'), heardBtn = $('#heardBtn'), themeBtn = $('#themeBtn');
+  const loader = $('#loader'), toastEl = $('#toast');
+  const FOCUS = 0.42, DEFAULT_WPM = 130;
+  const reduceMotion = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  // ---------- storage (per device convenience only) ----------
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  };
+  const settings = Object.assign({ size: innerWidth < 700 ? 26 : 38, theme: 'dark', heard: false }, store.get('pp.settings', {}));
+  function applySettings() {
+    document.documentElement.dataset.theme = settings.theme;
+    document.documentElement.style.setProperty('--size', settings.size + 'px');
+    themeBtn.textContent = settings.theme === 'dark' ? 'Light' : 'Dark';
+    heardEl.hidden = !settings.heard;
+    heardBtn.setAttribute('aria-pressed', String(settings.heard));
+    heardBtn.textContent = settings.heard ? 'Hide heard' : 'Show heard';
+    store.set('pp.settings', settings);
+  }
+
+  let toastT;
+  function toast(msg, ms) {
+    toastEl.textContent = msg; toastEl.classList.add('show');
+    clearTimeout(toastT); toastT = setTimeout(() => toastEl.classList.remove('show'), ms || 5000);
+  }
+
+  // ---------- parsing ----------
+  function clean(s) {
+    return s.replace(/<\?claude[^?]*\?>/g, '').replace(/<[^>]+>/g, '')
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/\*\*|__|\*|`/g, '')
+      .replace(/\s+/g, ' ').trim();
+  }
+  function classifyText(text, italic, first) {
+    if (!text) return null;
+    const wc = text.split(/\s+/).length;
+    if (text.length < 70 && wc <= 10 && !/[.!?,;:"”’)]$/.test(text)) return { t: first ? 'h1' : 'h', text };
+    if (italic) return { t: 'i', text };
+    if (/^[“"]/.test(text) && /[”"]\s*(\([^)]*\))?\.?$/.test(text)) return { t: 'q', text };
+    return { t: 'p', text };
+  }
+  function parseText(src) {
+    const lines = src.replace(/\r\n?/g, '\n').split('\n');
+    const out = []; let buf = [];
+    const flush = () => {
+      if (!buf.length) return;
+      const raw = buf.join(' ').trim(); buf = [];
+      const italic = /^(\*[^*][\s\S]*\*|_[^_][\s\S]*_)$/.test(raw);
+      const b = classifyText(clean(raw), italic, out.length === 0);
+      if (b) out.push(b);
+    };
+    for (const line of lines) {
+      const tr = line.trim();
+      if (!tr) { flush(); continue; }
+      const m = tr.match(/^(#{1,6})\s+(.*)$/);
+      if (m) { flush(); const text = clean(m[2]); if (text) out.push({ t: m[1].length === 1 && !out.some(b => b.t === 'h1') ? 'h1' : 'h', text }); continue; }
+      if (/^>/.test(tr)) { flush(); const text = clean(tr.replace(/^>\s?/, '')); if (text) out.push({ t: 'q', text }); continue; }
+      if (/^([-*+]|\d+[.)])\s+/.test(tr)) { flush(); buf.push(tr.replace(/^([-*+]|\d+[.)])\s+/, '')); flush(); continue; }
+      buf.push(tr);
+      if (/[.!?:;"”’)\]*_]$/.test(tr) || tr.length < 60) flush();
+    }
+    flush();
+    return out;
+  }
+  function fromHtml(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const out = [];
+    const norm = s => s.replace(/\s+/g, ' ').trim();
+    const pushPara = (n, forceQuote) => {
+      const text = norm(n.textContent);
+      if (!text) return;
+      const ems = Array.from(n.querySelectorAll('em, i')).map(x => x.textContent).join('');
+      const italic = ems && norm(ems) === text;
+      if (forceQuote) { out.push({ t: 'q', text }); return; }
+      const b = classifyText(text, italic, out.length === 0);
+      if (b) out.push(b);
+    };
+    const walk = el => {
+      for (const n of el.children) {
+        const tag = n.tagName.toLowerCase();
+        if (/^h[1-6]$/.test(tag)) {
+          const text = norm(n.textContent);
+          if (text) out.push({ t: tag === 'h1' && !out.some(b => b.t === 'h1') ? 'h1' : 'h', text });
+        } else if (tag === 'p') pushPara(n, false);
+        else if (tag === 'blockquote') { const ps = n.querySelectorAll('p'); ps.length ? ps.forEach(p => pushPara(p, true)) : pushPara(n, true); }
+        else if (tag === 'ul' || tag === 'ol') n.querySelectorAll('li').forEach(li => pushPara(li, false));
+        else if (tag === 'table') n.querySelectorAll('tr').forEach(tr => pushPara(tr, false));
+        else walk(n);
+      }
+    };
+    walk(doc.body);
+    return out;
+  }
+
+  // ---------- word normalization ----------
+  const ONES = ['zero','one','two','three','four','five','six','seven','eight','nine','ten','eleven','twelve','thirteen','fourteen','fifteen','sixteen','seventeen','eighteen','nineteen','twenty'];
+  const ORD = ['zeroth','first','second','third','fourth','fifth','sixth','seventh','eighth','ninth','tenth','eleventh','twelfth','thirteenth','fourteenth','fifteenth','sixteenth','seventeenth','eighteenth','nineteenth','twentieth'];
+  const STOP = new Set('a an the and or but of to in on at for with is are was were be been it its this that we us our you your i me my he him his she her they them their as so if not no do does did have has had will would can could just then than there here what who by from'.split(' '));
+  function normTok(tok) {
+    const s = tok.toLowerCase().replace(/[’‘`']/g, '');
+    const out = [];
+    for (const p of s.split(/[^a-z0-9]+/)) {
+      if (!p) continue;
+      let m;
+      if (/^\d+$/.test(p) && +p <= 20) out.push(ONES[+p]);
+      else if ((m = p.match(/^(\d+)(st|nd|rd|th)$/)) && +m[1] <= 20) out.push(ORD[+m[1]]);
+      else out.push(p);
+    }
+    return out;
+  }
+  function ed1(a, b) {
+    const la = a.length, lb = b.length;
+    if (Math.abs(la - lb) > 1) return false;
+    let i = 0, j = 0, diff = 0;
+    while (i < la && j < lb) {
+      if (a[i] === b[j]) { i++; j++; continue; }
+      if (++diff > 1) return false;
+      if (la > lb) i++; else if (lb > la) j++; else { i++; j++; }
+    }
+    return diff + (la - i) + (lb - j) <= 1;
+  }
+  function eq(a, b) {
+    if (a === b) return true;
+    if (a.length < 4 || b.length < 4) return false;
+    if (ed1(a, b)) return true;
+    return a.length >= 5 && b.length >= 5 && a.slice(0, 5) === b.slice(0, 5);
+  }
+
+  // ---------- document model ----------
+  let words = [], M = [], sentences = [];
+  let pos = -1, curW = -1, curS = -1;
+
+  function build(blocks) {
+    article.textContent = '';
+    words = []; M = []; sentences = [];
+    pos = -1; curW = -1; curS = -1;
+    let sid = 0;
+    const frag = document.createDocumentFragment();
+    for (const b of blocks) {
+      const el = document.createElement(b.t === 'h1' ? 'h1' : b.t === 'h' ? 'h2' : 'p');
+      el.className = 'b-' + b.t;
+      if (b.t === 'h' || b.t === 'h1') { el.textContent = b.text; frag.appendChild(el); sid++; continue; }
+      let open = false;
+      for (const tok of b.text.split(/\s+/)) {
+        if (!tok) continue;
+        const sp = document.createElement('span');
+        sp.className = 'w';
+        sp.textContent = tok + ' ';
+        const idx = words.length;
+        sp.dataset.i = idx;
+        words.push({ el: sp, s: sid });
+        for (const n of normTok(tok)) M.push({ n, w: idx, stop: STOP.has(n) });
+        (sentences[sid] || (sentences[sid] = [])).push(sp);
+        open = true;
+        el.appendChild(sp);
+        if (/[.!?]["”’)\]]*$/.test(tok)) { sid++; open = false; }
+      }
+      if (open) sid++;
+      frag.appendChild(el);
+    }
+    article.appendChild(frag);
+    scroller.scrollTop = 0;
+    updateStats();
+  }
+
+  function showEmpty() {
+    article.textContent = '';
+    const h = document.createElement('h1'); h.className = 'b-h1'; h.textContent = 'No sermon loaded';
+    const p = document.createElement('p'); p.className = 'b-p';
+    p.textContent = 'Tap Load sermon to choose a file or paste your text. It stays on this device.';
+    article.append(h, p);
+    docTitle.textContent = '';
+    updateStats();
+  }
+
+  function clearMarks() {
+    for (const w of words) w.el.classList.remove('read', 'cur', 'now');
+    pos = -1; curW = -1; curS = -1;
+  }
+
+  let saveT;
+  function setPos(e, jump) {
+    if (e < 0 || e >= M.length) return;
+    const w = M[e].w;
+    const a = Math.max(0, Math.min(curW, w)), b = Math.max(curW, w);
+    for (let i = a; i <= b; i++) words[i].el.classList.toggle('read', i <= w);
+    if (curW >= 0) words[curW].el.classList.remove('cur');
+    words[w].el.classList.add('cur');
+    const s = words[w].s;
+    if (s !== curS) {
+      if (curS >= 0) for (const sp of sentences[curS] || []) sp.classList.remove('now');
+      for (const sp of sentences[s] || []) sp.classList.add('now');
+      curS = s;
+    }
+    curW = w; pos = e;
+    clearTimeout(saveT); saveT = setTimeout(() => store.set('pp.pos', pos), 800);
+    updateStats();
+    follow(jump);
+  }
+
+  // ---------- scrolling ----------
+  let target = 0, animating = false, pausedUntil = 0;
+  function follow(jump) {
+    if (curW < 0) return;
+    if (!jump && performance.now() < pausedUntil) return;
+    const r = words[curW].el.getBoundingClientRect(), sr = scroller.getBoundingClientRect();
+    target = scroller.scrollTop + (r.top - sr.top) + r.height / 2 - scroller.clientHeight * FOCUS;
+    target = Math.max(0, Math.min(target, scroller.scrollHeight - scroller.clientHeight));
+    if (jump || reduceMotion) { scroller.scrollTop = target; return; }
+    if (!animating) { animating = true; requestAnimationFrame(step); }
+  }
+  function step() {
+    const cur = scroller.scrollTop, d = target - cur;
+    if (performance.now() < pausedUntil) { animating = false; return; }
+    if (Math.abs(d) < 1) { scroller.scrollTop = target; animating = false; return; }
+    let mv = d * 0.1;
+    if (Math.abs(mv) < 1) mv = Math.sign(d) * Math.min(1, Math.abs(d));
+    scroller.scrollTop = cur + mv;
+    requestAnimationFrame(step);
+  }
+  let resumeT;
+  function manualScroll() {
+    pausedUntil = performance.now() + 5000;
+    clearTimeout(resumeT);
+    resumeT = setTimeout(() => { if (listening) follow(false); }, 5100);
+  }
+  scroller.addEventListener('wheel', manualScroll, { passive: true });
+  scroller.addEventListener('touchmove', manualScroll, { passive: true });
+
+  function firstMatchForWord(i) {
+    let lo = 0, hi = M.length - 1, ans = -1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (M[mid].w >= i) { ans = mid; hi = mid - 1; } else lo = mid + 1; }
+    return ans;
+  }
+  function jumpToWord(i) {
+    const e = firstMatchForWord(i);
+    if (e < 0) return;
+    resetHeard();
+    pausedUntil = 0;
+    setPos(e, false);
+  }
+  function stepSentence(dir) {
+    let s = (curS < 0 ? -1 : curS) + dir;
+    while (s >= 0 && s < sentences.length && !(sentences[s] && sentences[s].length)) s += dir;
+    if (s < 0 || s >= sentences.length) return;
+    jumpToWord(+sentences[s][0].dataset.i);
+  }
+  article.addEventListener('click', ev => {
+    const sp = ev.target.closest('.w');
+    if (sp) jumpToWord(+sp.dataset.i);
+  });
+
+  // ---------- matching speech to the script ----------
+  function wlcs(h, s, e) {
+    const n = e - s + 1;
+    let prev = new Float32Array(n + 1), cur = new Float32Array(n + 1);
+    for (let i = 1; i <= h.length; i++) {
+      cur[0] = 0;
+      const hw = h[i - 1];
+      for (let j = 1; j <= n; j++) {
+        const m = M[s + j - 1];
+        let v = prev[j] > cur[j - 1] ? prev[j] : cur[j - 1];
+        if (eq(hw, m.n)) { const d = prev[j - 1] + (m.stop ? 0.4 : 1); if (d > v) v = d; }
+        cur[j] = v;
+      }
+      const t = prev; prev = cur; cur = t;
+    }
+    return prev[n];
+  }
+  function search(h, lo, hi, local) {
+    const K = h.length, L = K + 4;
+    let best = null, bestVal = -1e9;
+    for (let e = lo; e <= hi; e++) {
+      const score = wlcs(h, Math.max(0, e - L + 1), e);
+      const d = e - pos;
+      let need, pen;
+      if (!local) { need = 5; pen = 0; }
+      else if (d >= -2 && d <= 25) { need = 1.8; pen = 0; }
+      else if (d > 25) { need = 3.2; pen = Math.min(1.5, (d - 25) / 60); }
+      else { need = 4.2; pen = Math.min(2.5, 0.8 - d / 40); }
+      if (score < need) continue;
+      const val = score - pen + (eq(h[K - 1], M[e].n) ? 0.6 : 0);
+      if (val > bestVal + 1e-6 || (Math.abs(val - bestVal) <= 1e-6 && Math.abs(d) < Math.abs(best.e - pos))) {
+        bestVal = val; best = { e, score };
+      }
+    }
+    return best;
+  }
+  let lastKey = '', lastGlobal = 0;
+  function locate() {
+    const tail = getTail();
+    const key = tail.join(' ');
+    if (key === lastKey) return;
+    lastKey = key;
+    if (tail.length < 2 || !M.length) return;
+    const r = search(tail, Math.max(0, pos - 40), Math.min(M.length - 1, pos + 150), true);
+    if (r) {
+      if (r.e < pos && pos - r.e <= 3) return;
+      if (r.e !== pos) setPos(r.e, false);
+      return;
+    }
+    if (tail.length >= 7 && performance.now() - lastGlobal > 1500) {
+      lastGlobal = performance.now();
+      const g = search(tail, 0, M.length - 1, false);
+      if (g) setPos(g.e, false);
+    }
+  }
+  let pending = false;
+  function schedule() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => { pending = false; locate(); });
+  }
+
+  // ---------- speech recognition ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, listening = false;
+  let sessionWords = [], sessionBase = 0, carry = [], heardText = '';
+  let restarts = [];
+  function getTail() { return carry.concat(sessionWords.slice(sessionBase)).slice(-10); }
+  function resetHeard() { carry = []; sessionBase = sessionWords.length; lastKey = ''; }
+
+  function onResult(e) {
+    let t = '';
+    for (let i = 0; i < e.results.length; i++) t += ' ' + e.results[i][0].transcript;
+    heardText = t.trim();
+    const arr = [];
+    for (const tok of heardText.split(/\s+/)) for (const n of normTok(tok)) arr.push(n);
+    sessionWords = arr;
+    if (sessionBase > arr.length) sessionBase = arr.length;
+    renderHeard();
+    schedule();
+  }
+  function onEnd() {
+    carry = carry.concat(sessionWords.slice(sessionBase)).slice(-10);
+    sessionWords = []; sessionBase = 0;
+    if (!listening) return;
+    const now = Date.now();
+    restarts = restarts.filter(t => now - t < 8000);
+    restarts.push(now);
+    if (restarts.length > 6) { pauseListening('Listening stopped because speech recognition kept dropping. Tap Start listening to try again.'); return; }
+    setTimeout(() => {
+      if (!listening) return;
+      try { rec.start(); } catch (err) { pauseListening('Listening paused. Tap Start listening to continue.'); }
+    }, 150);
+  }
+  function onError(e) {
+    const c = e.error;
+    if (c === 'no-speech' || c === 'aborted') return;
+    if (c === 'not-allowed' || c === 'service-not-allowed') {
+      pauseListening(isIOS
+        ? 'Speech recognition is blocked. On iPad, turn on Dictation in Settings › General › Keyboard, and allow the microphone for this site.'
+        : 'The microphone is blocked. Allow it for this page in the browser’s site settings, then tap Start listening.', 9000);
+      return;
+    }
+    if (c === 'audio-capture') { pauseListening('No microphone was found. Check that one is connected.'); return; }
+    if (c === 'network') toast('Speech recognition needs an internet connection. Retrying.');
+  }
+  function startListening() {
+    if (!SR) { toast('This browser can’t listen. Use Chrome or Edge on a PC, or Safari on iPad. You can still move with taps and arrow keys.', 8000); return; }
+    if (!M.length) { openLoader(); return; }
+    if (!rec) {
+      rec = new SR();
+      rec.lang = navigator.language && /^en/i.test(navigator.language) ? navigator.language : 'en-US';
+      rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+      rec.onresult = onResult; rec.onerror = onError; rec.onend = onEnd;
+    }
+    listening = true; restarts = [];
+    try { rec.start(); } catch (e) {}
+    setMicUI(); startClock(); requestWake(); showBar();
+  }
+  function pauseListening(msg, ms) {
+    listening = false;
+    try { rec && rec.stop(); } catch (e) {}
+    setMicUI(); releaseWake(); showBar();
+    if (msg) toast(msg, ms || 7000);
+  }
+  function setMicUI() {
+    micBtn.classList.toggle('on', listening);
+    micLbl.textContent = listening ? 'Listening' : (SR ? 'Start listening' : 'Listening unavailable');
+    micBtn.setAttribute('aria-pressed', String(listening));
+  }
+  function renderHeard() {
+    if (!settings.heard) return;
+    const last = heardText.split(/\s+/).slice(-14).join(' ');
+    heardEl.innerHTML = '';
+    const b = document.createElement('b'); b.textContent = 'Hearing: ';
+    heardEl.append(b, document.createTextNode(last || '…'));
+  }
+
+  // ---------- clock and pace ----------
+  // The sermon timer starts on the first Start listening and keeps running through
+  // listening pauses; only From top or loading a new sermon resets it.
+  let elapsed = 0, tickT = null, startedAt = 0, startW = 0;
+  const timerEl = $('#timer'), timerVal = $('#timerVal');
+  const fmt = s => { s = Math.floor(s); const m = Math.floor(s / 60); return m + ':' + String(s % 60).padStart(2, '0'); };
+  function startClock() {
+    if (tickT) return;
+    startW = Math.max(curW, 0);
+    startedAt = Date.now();
+    tickT = setInterval(() => { elapsed = (Date.now() - startedAt) / 1000; updateStats(); }, 1000);
+    timerEl.classList.add('running');
+  }
+  function stopClock() { clearInterval(tickT); tickT = null; elapsed = 0; timerEl.classList.remove('running'); }
+  function updateStats() {
+    clockEl.textContent = fmt(elapsed);
+    timerVal.textContent = fmt(elapsed);
+    const total = words.length;
+    const remaining = Math.max(0, total - (curW + 1));
+    const advanced = curW - startW;
+    const wpm = elapsed > 60 && advanced > 40 ? advanced / (elapsed / 60) : DEFAULT_WPM;
+    leftEl.textContent = total ? (remaining ? '~' + Math.max(1, Math.round(remaining / wpm)) + ' min left' : 'Done') : '';
+    progressEl.style.width = total ? ((curW + 1) / total * 100) + '%' : '0';
+  }
+
+  // ---------- screen wake lock ----------
+  let wake = null;
+  async function requestWake() { try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) {} }
+  function releaseWake() { try { wake && wake.release(); } catch (e) {} wake = null; }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && listening) requestWake(); });
+
+  // ---------- toolbar auto-hide ----------
+  let hideT;
+  function showBar() {
+    bar.classList.remove('away');
+    clearTimeout(hideT);
+    if (listening) hideT = setTimeout(() => { if (listening && loader.hidden) bar.classList.add('away'); }, 3500);
+  }
+  ['pointermove', 'pointerdown'].forEach(t => window.addEventListener(t, showBar, { passive: true }));
+
+  // ---------- loading ----------
+  function openLoader() { loader.hidden = false; showBar(); }
+  function closeLoader() { loader.hidden = true; }
+  function loadBlocks(blocks, fallbackTitle, quiet) {
+    if (!blocks || !blocks.some(b => b.t !== 'h' && b.t !== 'h1')) { toast('No sermon text was found there.'); return; }
+    if (listening) pauseListening();
+    build(blocks);
+    const t = (blocks.find(b => b.t === 'h1') || {}).text || fallbackTitle || 'Sermon';
+    docTitle.textContent = t;
+    stopClock(); startW = 0; resetHeard(); updateStats();
+    store.set('pp.sermon', { blocks, title: t });
+    store.set('pp.pos', -1);
+    closeLoader();
+    if (!quiet) toast('Loaded “' + t + '”: ' + words.length + ' words, about ' + Math.max(1, Math.round(words.length / DEFAULT_WPM)) + ' minutes.');
+  }
+  async function handleFile(f) {
+    if (!f) return;
+    const name = f.name.toLowerCase(), base = f.name.replace(/\.[^.]+$/, '');
+    try {
+      if (name.endsWith('.docx')) {
+        if (!window.mammoth) { toast('The Word reader needs an internet connection. Paste the text instead.'); return; }
+        const res = await window.mammoth.convertToHtml({ arrayBuffer: await f.arrayBuffer() });
+        loadBlocks(fromHtml(res.value), base);
+      } else if (/\.(doc|pdf|pages|rtf)$/.test(name)) {
+        toast('Save it as Word (.docx) or plain text (.txt) first, then load that file.', 7000);
+      } else {
+        loadBlocks(parseText(await f.text()), base);
+      }
+    } catch (e) {
+      toast('That file couldn’t be read. Try saving it as .docx or .txt.');
+    }
+  }
+  $('#fileIn').addEventListener('change', e => { handleFile(e.target.files[0]); e.target.value = ''; });
+  const drop = $('#drop');
+  window.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); if (loader.hidden) openLoader(); });
+  window.addEventListener('dragleave', e => { if (!e.relatedTarget) drop.classList.remove('over'); });
+  window.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('over'); handleFile(e.dataTransfer.files[0]); });
+  $('#usePaste').addEventListener('click', () => {
+    const v = $('#pasteIn').value;
+    if (!v.trim()) { toast('Paste your sermon into the box first.'); return; }
+    loadBlocks(parseText(v), 'Sermon');
+  });
+  $('#closeLoad').addEventListener('click', closeLoader);
+  loader.addEventListener('click', e => { if (e.target === loader) closeLoader(); });
+
+  // ---------- controls ----------
+  $('#loadBtn').addEventListener('click', openLoader);
+  micBtn.addEventListener('click', () => listening ? pauseListening() : startListening());
+  $('#topBtn').addEventListener('click', () => {
+    if (listening) pauseListening();
+    clearMarks(); resetHeard(); stopClock(); startW = 0; updateStats();
+    store.set('pp.pos', -1);
+    scroller.scrollTo({ top: 0, behavior: reduceMotion ? 'auto' : 'smooth' });
+  });
+  function resize(delta) {
+    settings.size = Math.max(18, Math.min(84, settings.size + delta));
+    applySettings();
+    requestAnimationFrame(() => follow(true));
+  }
+  $('#smaller').addEventListener('click', () => resize(-3));
+  $('#bigger').addEventListener('click', () => resize(3));
+  themeBtn.addEventListener('click', () => { settings.theme = settings.theme === 'dark' ? 'light' : 'dark'; applySettings(); });
+  heardBtn.addEventListener('click', () => { settings.heard = !settings.heard; applySettings(); renderHeard(); });
+  $('#fsBtn').addEventListener('click', () => {
+    const d = document, el = d.documentElement;
+    if (d.fullscreenElement || d.webkitFullscreenElement) { (d.exitFullscreen || d.webkitExitFullscreen).call(d); return; }
+    const f = el.requestFullscreen || el.webkitRequestFullscreen;
+    const fallback = isIOS ? 'On iPad, tap Share › Add to Home Screen, then open the prompter from its icon for full screen.' : 'Full screen isn’t available in this browser.';
+    if (!f) { toast(fallback, 7000); return; }
+    try { Promise.resolve(f.call(el)).catch(() => toast(fallback, 7000)); } catch (e) { toast(fallback, 7000); }
+  });
+  window.addEventListener('keydown', e => {
+    showBar();
+    if (e.key === 'Escape' && !loader.hidden) { closeLoader(); return; }
+    if (e.target.closest && e.target.closest('textarea, input')) return;
+    if (!loader.hidden) return;
+    if (e.key === ' ') { e.preventDefault(); listening ? pauseListening() : startListening(); }
+    else if (['ArrowDown', 'ArrowRight', 'PageDown'].includes(e.key)) { e.preventDefault(); stepSentence(1); }
+    else if (['ArrowUp', 'ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); stepSentence(-1); }
+    else if (e.key === '+' || e.key === '=') resize(3);
+    else if (e.key === '-' || e.key === '_') resize(-3);
+  });
+  let rT;
+  window.addEventListener('resize', () => { clearTimeout(rT); rT = setTimeout(() => follow(true), 150); });
+
+  // ---------- start ----------
+  applySettings();
+  setMicUI();
+  const saved = store.get('pp.sermon', null);
+  if (saved && Array.isArray(saved.blocks) && saved.blocks.length) {
+    build(saved.blocks);
+    docTitle.textContent = saved.title || 'Sermon';
+    const p = store.get('pp.pos', -1);
+    if (p >= 0 && p < M.length) requestAnimationFrame(() => setPos(p, true));
+  } else {
+    showEmpty();
+    openLoader();
+  }
+  if (!SR) toast('This browser can’t listen. Use Chrome or Edge on a PC, or Safari on iPad.', 8000);
+  else if (!window.isSecureContext && location.protocol !== 'file:') toast('The microphone only works when this page is opened over https.', 8000);
+})();
+</script>
+</body>
+</html>
